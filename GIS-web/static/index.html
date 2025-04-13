@@ -1,0 +1,183 @@
+<!-- static/index.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS real-time positioning system</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" />
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        #map {
+            flex: 1;
+            min-height: 70%;
+        }
+        .info-panel {
+            padding: 15px;
+            background-color: #f4f4f4;
+            border-top: 1px solid #ddd;
+        }
+        .gps-data {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+        .data-item {
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .data-label {
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 5px;
+        }
+        .data-value {
+            font-size: 1.2em;
+        }
+        .status {
+            margin-bottom: 10px;
+        }
+        .status-connected {
+            color: green;
+            font-weight: bold;
+        }
+        .status-disconnected {
+            color: red;
+            font-weight: bold;
+        }
+        h1 {
+            margin: 0;
+            padding: 15px;
+            background-color: #2c3e50;
+            color: white;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>GPS real-time positioning system</h1>
+        <div id="map"></div>
+        <div class="info-panel">
+            <div class="status">状态: <span id="status" class="status-disconnected">未连接</span></div>
+            <div class="gps-data">
+                <div class="data-item">
+                    <div class="data-label">纬度</div>
+                    <div id="latitude" class="data-value">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">经度</div>
+                    <div id="longitude" class="data-value">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">速度</div>
+                    <div id="speed" class="data-value">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">海拔</div>
+                    <div id="altitude" class="data-value">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">卫星数</div>
+                    <div id="satellites" class="data-value">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">时间</div>
+                    <div id="timestamp" class="data-value">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
+    <script>
+        // 初始化地图，以中国为中心
+        const map = L.map('map').setView([35.0, 105.0], 4);
+
+        // 添加OpenStreetMap图层
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // 创建标记点，初始不可见
+        const marker = L.marker([0, 0], {
+            title: "当前位置"
+        });
+
+        // 创建轨迹线
+        const trackLine = L.polyline([], {
+            color: 'blue',
+            weight: 3,
+            opacity: 0.7
+        }).addTo(map);
+
+        // 保存历史位置
+        const positions = [];
+
+        // 记录是否首次定位
+        let isFirstPosition = true;
+
+        // 更新地图和信息面板的函数
+        function updateGpsInfo() {
+            fetch('/api/gps')
+                .then(response => response.json())
+                .then(data => {
+                    // 更新状态和信息面板
+                    document.getElementById('status').textContent = data.status;
+                    document.getElementById('status').className =
+                        data.status === "connected" ? "status-connected" : "status-disconnected";
+
+                    document.getElementById('latitude').textContent = data.latitude.toFixed(6) + "° " + data.lat_dir;
+                    document.getElementById('longitude').textContent = data.longitude.toFixed(6) + "° " + data.lon_dir;
+                    document.getElementById('speed').textContent = data.speed.toFixed(2) + " km/h";
+                    console.info('altitude:', data.altitude);
+                    document.getElementById('altitude').textContent = data.altitude.toFixed(1) + " m";
+                    document.getElementById('satellites').textContent = data.satellites;
+                    document.getElementById('timestamp').textContent = data.timestamp;
+
+                    // 如果有有效坐标，更新地图
+                    if (data.latitude !== 0 && data.longitude !== 0) {
+                        const position = [data.latitude, data.longitude];
+
+                        // 更新标记点
+                        marker.setLatLng(position);
+                        if (!marker.getElement()) {
+                            marker.addTo(map);
+                        }
+
+                        // 添加到轨迹并更新线条
+                        positions.push(position);
+                        trackLine.setLatLngs(positions);
+
+                        // 首次定位时，缩放到适当级别
+                        if (isFirstPosition) {
+                            map.setView(position, 16);
+                            isFirstPosition = false;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('获取GPS数据失败:', error);
+                    document.getElementById('status').textContent = "连接服务器失败";
+                    document.getElementById('status').className = "status-disconnected";
+                });
+        }
+
+        // 每2秒更新一次数据
+        updateGpsInfo();
+        setInterval(updateGpsInfo, 2000);
+    </script>
+</body>
+</html>
