@@ -1,11 +1,11 @@
-<!-- static/index.html -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GPS real-time positioning system</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" />
+    <!-- 加载高德地图JS API -->
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=9c4594485cff9be377a94644b402b634"></script>
     <style>
         body, html {
             margin: 0;
@@ -101,34 +101,216 @@
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
     <script>
-        // 初始化地图，以中国为中心
-        const map = L.map('map').setView([35.0, 105.0], 4);
+        // REF: https://github.com/wandergis/coordtransform
+        /**
+        * Created by Wandergis on 2015/7/8.
+        * 提供了百度坐标（BD-09）、国测局坐标（火星坐标，GCJ-02）、和 WGS-84 坐标系之间的转换
+        */
+        // UMD 魔法代码
+        // if the module has no dependencies, the above pattern can be simplified to
+        (function (root, factory) {
+        if (typeof define === 'function' && define.amd) {
+            // AMD. Register as an anonymous module.
+            define([], factory);
+        } else if (typeof module === 'object' && module.exports) {
+            // Node. Does not work with strict CommonJS, but
+            // only CommonJS-like environments that support module.exports,
+            // like Node.
+            module.exports = factory();
+        } else {
+            // Browser globals (root is window)
+            root.coordtransformjs = factory();
+        }
+        }(this, function () {
+        // 定义一些常量
+        var x_PI = 3.14159265358979324 * 3000.0 / 180.0;
+        var PI = 3.1415926535897932384626;
+        var a = 6378245.0;
+        var ee = 0.00669342162296594323;
+        /**
+        * 百度坐标系 (BD-09) 与 火星坐标系 (GCJ-02) 的转换
+        * 即 百度 转 谷歌、高德
+        * @param bd_lng
+        * @param bd_lat
+        * @returns {*[]}
+        */
+        var bd09togcj02 = function bd09togcj02(bd_lng, bd_lat) {
+            var bd_lng = +bd_lng;
+            var bd_lat = +bd_lat;
+            var x = bd_lng - 0.0065;
+            var y = bd_lat - 0.006;
+            var z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * x_PI);
+            var theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * x_PI);
+            var gg_lng = z * Math.cos(theta);
+            var gg_lat = z * Math.sin(theta);
+            return [gg_lng, gg_lat]
+        };
 
-        // 添加OpenStreetMap图层
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        }).addTo(map);
+        /**
+        * 火星坐标系 (GCJ-02) 与百度坐标系 (BD-09) 的转换
+        * 即 谷歌、高德 转 百度
+        * @param lng
+        * @param lat
+        * @returns {*[]}
+        */
+        var gcj02tobd09 = function gcj02tobd09(lng, lat) {
+            var lat = +lat;
+            var lng = +lng;
+            var z = Math.sqrt(lng * lng + lat * lat) + 0.00002 * Math.sin(lat * x_PI);
+            var theta = Math.atan2(lat, lng) + 0.000003 * Math.cos(lng * x_PI);
+            var bd_lng = z * Math.cos(theta) + 0.0065;
+            var bd_lat = z * Math.sin(theta) + 0.006;
+            return [bd_lng, bd_lat]
+        };
 
-        // 创建标记点，初始不可见
-        const marker = L.marker([0, 0], {
-            title: "当前位置"
+        /**
+        * WGS-84 转 GCJ-02
+        * @param lng
+        * @param lat
+        * @returns {*[]}
+        */
+        var wgs84togcj02 = function wgs84togcj02(lng, lat) {
+            var lat = +lat;
+            var lng = +lng;
+            if (out_of_china(lng, lat)) {
+            return [lng, lat]
+            } else {
+            var dlat = transformlat(lng - 105.0, lat - 35.0);
+            var dlng = transformlng(lng - 105.0, lat - 35.0);
+            var radlat = lat / 180.0 * PI;
+            var magic = Math.sin(radlat);
+            magic = 1 - ee * magic * magic;
+            var sqrtmagic = Math.sqrt(magic);
+            dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtmagic) * PI);
+            dlng = (dlng * 180.0) / (a / sqrtmagic * Math.cos(radlat) * PI);
+            var mglat = lat + dlat;
+            var mglng = lng + dlng;
+            return [mglng, mglat]
+            }
+        };
+
+        /**
+        * GCJ-02 转换为 WGS-84
+        * @param lng
+        * @param lat
+        * @returns {*[]}
+        */
+        var gcj02towgs84 = function gcj02towgs84(lng, lat) {
+            var lat = +lat;
+            var lng = +lng;
+            if (out_of_china(lng, lat)) {
+            return [lng, lat]
+            } else {
+            var dlat = transformlat(lng - 105.0, lat - 35.0);
+            var dlng = transformlng(lng - 105.0, lat - 35.0);
+            var radlat = lat / 180.0 * PI;
+            var magic = Math.sin(radlat);
+            magic = 1 - ee * magic * magic;
+            var sqrtmagic = Math.sqrt(magic);
+            dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtmagic) * PI);
+            dlng = (dlng * 180.0) / (a / sqrtmagic * Math.cos(radlat) * PI);
+            var mglat = lat + dlat;
+            var mglng = lng + dlng;
+            return [lng * 2 - mglng, lat * 2 - mglat]
+            }
+        };
+
+        var transformlat = function transformlat(lng, lat) {
+            var lat = +lat;
+            var lng = +lng;
+            var ret = -100.0 + 2.0 * lng + 3.0 * lat + 0.2 * lat * lat + 0.1 * lng * lat + 0.2 * Math.sqrt(Math.abs(lng));
+            ret += (20.0 * Math.sin(6.0 * lng * PI) + 20.0 * Math.sin(2.0 * lng * PI)) * 2.0 / 3.0;
+            ret += (20.0 * Math.sin(lat * PI) + 40.0 * Math.sin(lat / 3.0 * PI)) * 2.0 / 3.0;
+            ret += (160.0 * Math.sin(lat / 12.0 * PI) + 320 * Math.sin(lat * PI / 30.0)) * 2.0 / 3.0;
+            return ret
+        };
+
+        var transformlng = function transformlng(lng, lat) {
+            var lat = +lat;
+            var lng = +lng;
+            var ret = 300.0 + lng + 2.0 * lat + 0.1 * lng * lng + 0.1 * lng * lat + 0.1 * Math.sqrt(Math.abs(lng));
+            ret += (20.0 * Math.sin(6.0 * lng * PI) + 20.0 * Math.sin(2.0 * lng * PI)) * 2.0 / 3.0;
+            ret += (20.0 * Math.sin(lng * PI) + 40.0 * Math.sin(lng / 3.0 * PI)) * 2.0 / 3.0;
+            ret += (150.0 * Math.sin(lng / 12.0 * PI) + 300.0 * Math.sin(lng / 30.0 * PI)) * 2.0 / 3.0;
+            return ret
+        };
+
+        /**
+        * 判断是否在国内，不在国内则不做偏移
+        * @param lng
+        * @param lat
+        * @returns {boolean}
+        */
+        var out_of_china = function out_of_china(lng, lat) {
+            var lat = +lat;
+            var lng = +lng;
+            // 纬度 3.86~53.55, 经度 73.66~135.05 
+            return !(lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55);
+        };
+
+        return {
+            bd09togcj02: bd09togcj02,
+            gcj02tobd09: gcj02tobd09,
+            wgs84togcj02: wgs84togcj02,
+            gcj02towgs84: gcj02towgs84
+        }
+        }));
+    </script>
+
+    <script>
+        // 初始化高德地图
+        const map = new AMap.Map('map', {
+            zoom: 14,              // 初始缩放级别
+            center: [105.0, 35.0], // 初始中心点为中国
+            resizeEnable: true     // 允许调整大小
         });
-
+        
+        // 添加地图控件
+        map.plugin([
+            'AMap.ToolBar',        // 工具条，包含缩放按钮
+            'AMap.Scale',          // 比例尺
+            'AMap.HawkEye',        // 鹰眼缩略图
+            'AMap.MapType',        // 地图类型切换
+            'AMap.GeolocationControl' // 定位控件
+        ], function(){
+            map.addControl(new AMap.ToolBar());
+            map.addControl(new AMap.Scale());
+            map.addControl(new AMap.HawkEye({isOpen: false}));
+            map.addControl(new AMap.MapType());
+            map.addControl(new AMap.GeolocationControl({
+                showButton: true
+            }));
+        });
+        
+        // 创建标记点，初始不可见
+        let marker = null;
+        
         // 创建轨迹线
-        const trackLine = L.polyline([], {
-            color: 'blue',
-            weight: 3,
-            opacity: 0.7
-        }).addTo(map);
-
+        let polyline = new AMap.Polyline({
+            path: [],
+            strokeColor: "#3366FF",  // 线颜色
+            strokeOpacity: 0.7,      // 线透明度
+            strokeWeight: 4,         // 线宽
+            strokeStyle: "solid",    // 线样式
+            lineJoin: 'round'        // 连接处样式
+        });
+        polyline.setMap(map);
+        
         // 保存历史位置
         const positions = [];
-
+        
         // 记录是否首次定位
         let isFirstPosition = true;
 
+        // 坐标转换函数 (WGS84 to GCJ02)
+        function coordTransform(longitude, latitude) {
+            // 注意：高德地图使用的是GCJ-02坐标系
+            // 这里为简化，直接使用原坐标，实际使用需考虑坐标转换
+            //return [longitude, latitude];
+            return coordtransformjs.wgs84togcj02(longitude, latitude)
+        }
+        
         // 更新地图和信息面板的函数
         function updateGpsInfo() {
             fetch('/api/gps')
@@ -138,32 +320,50 @@
                     document.getElementById('status').textContent = data.status;
                     document.getElementById('status').className =
                         data.status === "connected" ? "status-connected" : "status-disconnected";
-
+                    
                     document.getElementById('latitude').textContent = data.latitude.toFixed(6) + "° " + data.lat_dir;
                     document.getElementById('longitude').textContent = data.longitude.toFixed(6) + "° " + data.lon_dir;
                     document.getElementById('speed').textContent = data.speed.toFixed(2) + " km/h";
-                    console.info('altitude:', data.altitude);
                     document.getElementById('altitude').textContent = data.altitude.toFixed(1) + " m";
                     document.getElementById('satellites').textContent = data.satellites;
                     document.getElementById('timestamp').textContent = data.timestamp;
-
+                    
                     // 如果有有效坐标，更新地图
                     if (data.latitude !== 0 && data.longitude !== 0) {
-                        const position = [data.latitude, data.longitude];
-
+                        // 转换坐标系
+                        const position = coordTransform(data.longitude, data.latitude);
+                        
                         // 更新标记点
-                        marker.setLatLng(position);
-                        if (!marker.getElement()) {
-                            marker.addTo(map);
+                        if (marker === null) {
+                            marker = new AMap.Marker({
+                                position: position,
+                                title: '当前位置',
+                                icon: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_r.png',
+                                anchor: 'bottom-center'
+                            });
+                            marker.setMap(map);
+                            
+                            // 添加信息窗体
+                            let infoWindow = new AMap.InfoWindow({
+                                content: '<div style="padding:10px;">当前位置</div>',
+                                offset: new AMap.Pixel(0, -30)
+                            });
+                            
+                            marker.on('click', function() {
+                                infoWindow.open(map, marker.getPosition());
+                            });
+                        } else {
+                            marker.setPosition(position);
                         }
-
+                        
                         // 添加到轨迹并更新线条
                         positions.push(position);
-                        trackLine.setLatLngs(positions);
-
+                        polyline.setPath(positions);
+                        
                         // 首次定位时，缩放到适当级别
                         if (isFirstPosition) {
-                            map.setView(position, 16);
+                            map.setCenter(position);
+                            map.setZoom(16);
                             isFirstPosition = false;
                         }
                     }
@@ -174,7 +374,7 @@
                     document.getElementById('status').className = "status-disconnected";
                 });
         }
-
+        
         // 每2秒更新一次数据
         updateGpsInfo();
         setInterval(updateGpsInfo, 2000);
