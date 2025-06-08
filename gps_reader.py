@@ -126,8 +126,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--serial', nargs = 1, type=str, default='/dev/ttyLP7', help = 'gps serial port name, default: %(default)s)')
-    parser.add_argument('--baudrate', nargs = 1, type=int, default=115200, help = 'gps serial port baudrate, default: %(default)s)')
+    parser.add_argument('--serial', type=str, default='/dev/ttyLP7', help = 'gps serial port name, default: %(default)s)')
+    parser.add_argument('--baudrate', type=int, default=115200, help = 'gps serial port baudrate, default: %(default)s)')
     args = parser.parse_args()
 
     start_gps()
